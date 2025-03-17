@@ -6,12 +6,22 @@ from sui_gas_pool_sdk.exceptions import GasReservationDurationTooLongException
 
 
 @dataclass
+class GasCoin:
+    object_id: str
+    version: int
+    digest: str
+
+
+@dataclass
 class GasReservation:
+    sponsor_address: str
     reservation_id: int
-    gas_budget: int
-    reserve_duration_secs: int
-    created_at: int
-    expires_at: int
+    gas_coins: list[GasCoin]
+
+
+@dataclass
+class SponsoredTxResponse:
+    tx_digest: str
 
 
 class SuiGasPool:
@@ -41,12 +51,50 @@ class SuiGasPool:
         self.http_client = http_client or httpx.AsyncClient()
         self._owns_client = http_client is None
 
+    async def sponsor_and_execute_tx(
+        self,
+        tx_bytes: str,
+        gas_budget: int,
+        reserve_duration_secs: int,
+    ) -> str:
+        """
+        Reserve gas and submit a transaction to a sui-gas-pool service and return the transaction digest.
+
+        Args:
+            tx_bytes: The transaction bytes to execute.
+            gas_budget: The gas budget for the transaction.
+            reserve_duration_secs: The duration to reserve gas for.
+
+        Returns:
+            The transaction digest.
+        """
+        gas_reservation = await self.reserve_gas(
+            gas_budget=gas_budget,
+            reserve_duration_secs=reserve_duration_secs,
+        )
+        tx_digest = await self.execute_tx(
+            tx_bytes=tx_bytes,
+            reservation_id=gas_reservation.reservation_id,
+        )
+        return tx_digest
+
     async def execute_tx(
         self,
         tx_bytes: str,
         reservation_id: int,
         user_sig: str,
-    ):
+    ) -> str:
+        """
+        Submit a transaction to a sui-gas-pool service.
+
+        Args:
+            tx_bytes: The transaction bytes to execute.
+            reservation_id: The reservation ID to use for the transaction.
+            user_sig: The user signature for the transaction.
+
+        Returns:
+            The transaction digest.
+        """
         headers = {
             "Content-Type": "application/json",
             "Authorization": f"Bearer {self.gas_pool_auth_token}",
@@ -56,19 +104,30 @@ class SuiGasPool:
             "tx_bytes": tx_bytes,
             "user_sig": user_sig,
         }
-
         r = await self.http_client.post(
             url=f"{self.gas_pool_url}/v1/execute_tx",
             headers=headers,
             json=data,
         )
-        return r.json()
+        r.raise_for_status()
+        tx_digest = r.json()["effects"]["transactionDigest"]
+        return tx_digest
 
     async def reserve_gas(
         self,
         gas_budget: int,
         reserve_duration_secs: int,
     ) -> GasReservation:
+        """
+        Reserve gas for a transaction.
+
+        Args:
+            gas_budget: The gas budget for the transaction.
+            reserve_duration_secs: The duration to reserve gas for.
+
+        Returns:
+            A GasReservation object.
+        """
         if reserve_duration_secs > 600:
             raise GasReservationDurationTooLongException()
         headers = {
@@ -84,27 +143,19 @@ class SuiGasPool:
             headers=headers,
             json=data,
         )
-        return r.json()
-
-    async def _sui_get_events(
-        self,
-        tx_digest: str,
-    ):
-        payload = {
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "sui_getEvents",
-            "params": [tx_digest],
-        }
-        headers = {
-            "Content-Type": "application/json",
-        }
-        r = await self.http_client.post(
-            url=self.sui_rpc_url,
-            headers=headers,
-            json=payload,
+        r.raise_for_status()
+        return GasReservation(
+            sponsor_address=r.json()["result"]["sponsor_address"],
+            reservation_id=r.json()["result"]["reservation_id"],
+            gas_coins=[
+                GasCoin(
+                    object_id=coin["objectId"],
+                    version=coin["version"],
+                    digest=coin["digest"],
+                )
+                for coin in r.json()["result"]["gas_coins"]
+            ],
         )
-        return r.json()
 
     async def close(self):
         if self._owns_client:
