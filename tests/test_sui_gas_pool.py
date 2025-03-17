@@ -21,13 +21,13 @@ sgp = SuiGasPool(
 )
 
 
-# @pytest.mark.asyncio
-# async def test_reserve_gas():
-#    gas_reservation = await sgp.reserve_gas(
-#        gas_budget=1_000_000_000,
-#        reserve_duration_secs=60,
-#    )
-#    assert gas_reservation is not None
+@pytest.mark.asyncio
+async def test_reserve_gas():
+    gas_reservation = await sgp.reserve_gas(
+        gas_budget=1_000_000_000,
+        reserve_duration_secs=60,
+    )
+    assert gas_reservation is not None
 
 
 @pytest.mark.asyncio
